@@ -19,6 +19,7 @@
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
+    window.addEventListener('DOMContentLoaded', () => {
         const { useState, useEffect } = React;
 
         // --- Detect OAuth redirect (?code=...) and auto exchange it ---
@@ -26,15 +27,12 @@
           const params = new URLSearchParams(window.location.search);
           const code = params.get('code');
           if (code) {
-            // exchangeCodeForToken is defined later in your component, so defer until after mount
-            window.__oauthCode = code; // temporarily store it
-            // Clean the URL so ?code disappears after reload
+            window.__oauthCode = code; 
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         }, []);
         // --------------------------------------------------------------
 
-        // Lucide icons as inline SVG components
         const Send = ({ size = 24 }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -93,7 +91,6 @@
             const [copied, setCopied] = useState(false);
             const [authStep, setAuthStep] = useState(1);
 
-            // Check token expiry
             useEffect(() => {
                 if (tokenExpiry) {
                     const timer = setInterval(() => {
@@ -106,14 +103,12 @@
                 }
             }, [tokenExpiry]);
 
-            // --- Check for stored OAuth code from redirect ---
             useEffect(() => {
                 if (window.__oauthCode) {
                     exchangeCodeForToken(window.__oauthCode);
                     delete window.__oauthCode;
                 }
             }, []);
-            // --------------------------------------------------
 
             const generateCodeVerifier = () => {
                 const array = new Uint8Array(32);
@@ -200,6 +195,13 @@
                     sessionStorage.removeItem('brightspace_auth');
                 } catch (err) {
                     alert(`Error exchanging code for token: ${err.message}`);
-                }
+                } 
             };
 
+            // ... (keep the rest of your code exactly as before — no changes)
+
+            ReactDOM.render(<BrightspaceAPITester />, document.getElementById('root'));
+    }); // closes window.addEventListener
+    </script>
+</body>
+</html>
