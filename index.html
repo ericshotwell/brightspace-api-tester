@@ -18,7 +18,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script type="text/babel" data-presets="react">
         const { useState, useEffect } = React;
 
         // --- Detect OAuth redirect (?code=...) and auto exchange it ---
@@ -202,3 +202,4 @@
                     alert(`Error exchanging code for token: ${err.message}`);
                 }
             };
+
