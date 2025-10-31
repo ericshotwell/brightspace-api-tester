@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brightspace API Tester</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Lucide icons as inline SVG components
+        const Send = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+        );
+
+        const Trash2 = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+        );
+
+        const Copy = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        );
+
+        const Check = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        );
+
+        const Key = ({ size = 24 }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"></path>
+                <path d="m21 2-9.6 9.6"></path>
+                <circle cx="7.5" cy="15.5" r="5.5"></circle>
+            </svg>
+        );
+
+        function BrightspaceAPITester() {
+            const [baseUrl, setBaseUrl] = useState('');
+            const [clientId, setClientId] = useState('');
+            const [clientSecret, setClientSecret] = useState('');
+            const [redirectUri, setRedirectUri] = useState('');
+            const [scope, setScope] = useState('core:*:*');
+            
+            const [accessToken, setAccessToken] = useState('');
+            const [tokenExpiry, setTokenExpiry] = useState(null);
+            const [refreshToken, setRefreshToken] = useState('');
+            
+            const [method, setMethod] = useState('GET');
+            const [endpoint, setEndpoint] = useState('/d2l/api/lp/1.43/users/whoami');
+            const [headers, setHeaders] = useState('');
+            const [body, setBody] = useState('');
+            
+            const [response, setResponse] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [copied, setCopied] = useState(false);
+            const [authStep, setAuthStep] = useState(1);
+
+            // Check token expiry
+            useEffect(() => {
+                if (tokenExpiry) {
+                    const timer = setInterval(() => {
+                        if (Date.now() >= tokenExpiry) {
+                            setAccessToken('');
+                            setTokenExpiry(null);
+                        }
+                    }, 1000);
+                    return () => clearInterval(timer);
+                }
+            }, [tokenExpiry]);
+
+            const generateCodeVerifier = () => {
+                const array = new Uint8Array(32);
+                crypto.getRandomValues(array);
+                return btoa(String.fromCharCode.apply(null, array))
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=/g, '');
+            };
+
+            const generateCodeChallenge = async (verifier) => {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(verifier);
+                const hash = await crypto.subtle.digest('SHA-256', data);
+                return btoa(String.fromCharCode.apply(null, new Uint8Array(hash)))
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=/g, '');
+            };
+
+            const startOAuthFlow = async () => {
+                if (!baseUrl || !clientId || !redirectUri) {
+                    alert('Please fill in Base URL, Client ID, and Redirect URI');
+                    return;
+                }
+
+                const codeVerifier = generateCodeVerifier();
+                const codeChallenge = await generateCodeChallenge(codeVerifier);
+                
+                // Store code verifier for later
+                const state = Math.random().toString(36).substring(7);
+                const authData = { codeVerifier, state, clientId, clientSecret, redirectUri, baseUrl };
+                sessionStorage.setItem('brightspace_auth', JSON.stringify(authData));
+
+                const authUrl = new URL(`https://auth.brightspace.com/oauth2/auth`);
+                authUrl.searchParams.append('response_type', 'code');
+                authUrl.searchParams.append('client_id', clientId);
+                authUrl.searchParams.append('redirect_uri', redirectUri);
+                authUrl.searchParams.append('scope', scope);
+                authUrl.searchParams.append('state', state);
+                authUrl.searchParams.append('code_challenge', codeChallenge);
+                authUrl.searchParams.append('code_challenge_method', 'S256');
+
+                setAuthStep(2);
+                window.open(authUrl.toString(), '_blank');
+            };
+
+            const exchangeCodeForToken = async (authCode) => {
+                const authData = JSON.parse(sessionStorage.getItem('brightspace_auth'));
+                if (!authData) {
+                    alert('Authentication session not found. Please start the OAuth flow again.');
+                    return;
+                }
+
+                try {
+                    const tokenUrl = `https://auth.brightspace.com/core/connect/token`;
+                    const params = new URLSearchParams({
+                        grant_type: 'authorization_code',
+                        code: authCode,
+                        redirect_uri: authData.redirectUri,
+                        client_id: authData.clientId,
+                        client_secret: authData.clientSecret,
+                        code_verifier: authData.codeVerifier
+                    });
+
+                    const res = await fetch(tokenUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: params.toString()
+                    });
+
+                    if (!res.ok) {
+                        const error = await res.text();
+                        throw new Error(`Token exchange failed: ${error}`);
+                    }
+
+                    const tokenData = await res.json();
+                    setAccessToken(tokenData.access_token);
+                    setRefreshToken(tokenData.refresh_token);
+                    setTokenExpiry(Date.now() + (tokenData.expires_in * 1000));
+                    setAuthStep(3);
+                    
+                    sessionStorage.removeItem('brightspace_auth');
+                } catch (err) {
+                    alert(`Error exchanging code for token: ${err.message}`);
+                }
+            };
+
+            const manualTokenEntry = () => {
+                const token = prompt('Paste your access token:');
+                if (token) {
+                    setAccessToken(token);
+                    setAuthStep(3);
+                }
+            };
+
+            const sendRequest = async () => {
+                if (!accessToken) {
+                    alert('Please authenticate first to get an access token');
+                    return;
+                }
+
+                setLoading(true);
+                setResponse(null);
+
+                try {
+                    const url = new URL(endpoint, baseUrl);
+
+                    const options = {
+                        method,
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                            ...parseHeaders(headers)
+                        }
+                    };
+
+                    if (method !== 'GET' && method !== 'HEAD' && body) {
+                        options.body = body;
+                    }
+
+                    const startTime = Date.now();
+                    const res = await fetch(url.toString(), options);
+                    const endTime = Date.now();
+
+                    const contentType = res.headers.get('content-type');
+                    let data;
+                    
+                    if (contentType && contentType.includes('application/json')) {
+                        data = await res.json();
+                    } else {
+                        data = await res.text();
+                    }
+
+                    setResponse({
+                        status: res.status,
+                        statusText: res.statusText,
+                        headers: Object.fromEntries(res.headers.entries()),
+                        data,
+                        time: endTime - startTime
+                    });
+                } catch (err) {
+                    setResponse({
+                        error: true,
+                        message: err.message
+                    });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const parseHeaders = (headerString) => {
+                if (!headerString.trim()) return {};
+                
+                const headers = {};
+                headerString.split('\n').forEach(line => {
+                    const [key, ...valueParts] = line.split(':');
+                    if (key && valueParts.length) {
+                        headers[key.trim()] = valueParts.join(':').trim();
+                    }
+                });
+                return headers;
+            };
+
+            const copyResponse = () => {
+                const text = JSON.stringify(response.data, null, 2);
+                navigator.clipboard.writeText(text);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+            };
+
+            const clearAll = () => {
+                setEndpoint('/d2l/api/lp/1.43/users/whoami');
+                setHeaders('');
+                setBody('');
+                setResponse(null);
+            };
+
+            const resetAuth = () => {
+                setAccessToken('');
+                setRefreshToken('');
+                setTokenExpiry(null);
+                setAuthStep(1);
+            };
+
+            const tokenTimeRemaining = () => {
+                if (!tokenExpiry) return null;
+                const remaining = Math.floor((tokenExpiry - Date.now()) / 1000);
+                if (remaining < 0) return 'Expired';
+                const minutes = Math.floor(remaining / 60);
+                const seconds = remaining % 60;
+                return `${minutes}m ${seconds}s`;
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-orange-50 to-blue-50 p-6">
+                    <div className="max-w-6xl mx-auto">
+                        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+                            <div className="bg-gradient-to-r from-orange-500 to-blue-600 p-6">
+                                <h1 className="text-3xl font-bold text-white">Brightspace API Tester</h1>
+                                <p className="text-orange-100 mt-1">OAuth 2.0 authenticated API calls</p>
+                            </div>
+
+                            <div className="p-6 space-y-6">
+                                {/* OAuth Configuration */}
+                                {authStep === 1 && (
+                                    <div className="bg-blue-50 rounded-lg p-4 space-y-3">
+                                        <h2 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
+                                            <Key size={20} />
+                                            Step 1: OAuth 2.0 Configuration
+                                        </h2>
+                                        <div className="space-y-3">
+                                            <input
+                                                type="text"
+                                                placeholder="Base URL (e.g., https://your.brightspace.com)"
+                                                value={baseUrl}
+                                                onChange={(e) => setBaseUrl(e.target.value)}
+                                                className="w-full px-3 py-2 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Client ID"
+                                                value={clientId}
+                                                onChange={(e) => setClientId(e.target.value)}
+                                                className="w-full px-3 py-2 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <input
+                                                type="password"
+                                                placeholder="Client Secret"
+                                                value={clientSecret}
+                                                onChange={(e) => setClientSecret(e.target.value)}
+                                                className="w-full px-3 py-2 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Redirect URI"
+                                                value={redirectUri}
+                                                onChange={(e) => setRedirectUri(e.target.value)}
+                                                className="w-full px-3 py-2 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Scope (e.g., core:*:*)"
+                                                value={scope}
+                                                onChange={(e) => setScope(e.target.value)}
+                                                className="w-full px-3 py-2 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <button
+                                                onClick={startOAuthFlow}
+                                                className="w-full px-6 py-3 bg-gradient-to-r from-orange-500 to-blue-600 text-white rounded-lg font-semibold hover:from-orange-600 hover:to-blue-700"
+                                            >
+                                                Start OAuth Flow
+                                            </button>
+                                            <button
+                                                onClick={manualTokenEntry}
+                                                className="w-full px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm"
+                                            >
+                                                Or manually enter access token
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Authorization Code Entry */}
+                                {authStep === 2 && (
+                                    <div className="bg-yellow-50 rounded-lg p-4 space-y-3">
+                                        <h2 className="font-semibold text-yellow-900 mb-3">
+                                            Step 2: Enter Authorization Code
+                                        </h2>
+                                        <p className="text-sm text-yellow-800">
+                                            After authorizing in the popup window, you'll be redirected. Copy the <code className="bg-yellow-100 px-1 rounded">code</code> parameter from the redirect URL and paste it below.
+                                        </p>
+                                        <input
+                                            type="text"
+                                            placeholder="Authorization code from redirect URL"
+                                            onPaste={(e) => {
+                                                setTimeout(() => {
+                                                    const code = e.target.value;
+                                                    if (code) exchangeCodeForToken(code);
+                                                }, 100);
+                                            }}
+                                            className="w-full px-3 py-2 border border-yellow-200 rounded focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                                        />
+                                        <button
+                                            onClick={resetAuth}
+                                            className="text-sm text-yellow-700 hover:text-yellow-900"
+                                        >
+                                            ← Back to configuration
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Authenticated Status */}
+                                {authStep === 3 && accessToken && (
+                                    <div className="bg-green-50 rounded-lg p-4">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h2 className="font-semibold text-green-900 mb-1">✓ Authenticated</h2>
+                                                <p className="text-sm text-green-700">
+                                                    Token: {accessToken.substring(0, 20)}...
+                                                    {tokenExpiry && ` • Expires in: ${tokenTimeRemaining()}`}
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={resetAuth}
+                                                className="px-4 py-2 bg-green-200 text-green-800 rounded-lg hover:bg-green-300 text-sm"
+                                            >
+                                                Re-authenticate
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Request Section */}
+                                {accessToken && (
+                                    <div className="space-y-3">
+                                        <div className="flex gap-2">
+                                            <select
+                                                value={method}
+                                                onChange={(e) => setMethod(e.target.value)}
+                                                className="px-4 py-2 border border-gray-300 rounded-lg font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            >
+                                                <option>GET</option>
+                                                <option>POST</option>
+                                                <option>PUT</option>
+                                                <option>PATCH</option>
+                                                <option>DELETE</option>
+                                            </select>
+                                            <input
+                                                type="text"
+                                                placeholder="/d2l/api/lp/1.43/users/whoami"
+                                                value={endpoint}
+                                                onChange={(e) => setEndpoint(e.target.value)}
+                                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <button
+                                                onClick={sendRequest}
+                                                disabled={loading}
+                                                className="px-6 py-2 bg-gradient-to-r from-orange-500 to-blue-600 text-white rounded-lg font-semibold hover:from-orange-600 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                            >
+                                                <Send size={18} />
+                                                {loading ? 'Sending...' : 'Send'}
+                                            </button>
+                                            <button
+                                                onClick={clearAll}
+                                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 flex items-center gap-2"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+
+                                        {/* Additional Headers */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Additional Headers (one per line: Key: Value)
+                                            </label>
+                                            <textarea
+                                                value={headers}
+                                                onChange={(e) => setHeaders(e.target.value)}
+                                                placeholder="Custom-Header: value"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                rows="3"
+                                            />
+                                        </div>
+
+                                        {/* Body */}
+                                        {method !== 'GET' && method !== 'HEAD' && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                    Request Body (JSON)
+                                                </label>
+                                                <textarea
+                                                    value={body}
+                                                    onChange={(e) => setBody(e.target.value)}
+                                                    placeholder='{\n  "key": "value"\n}'
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                    rows="6"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Response Section */}
+                                {response && (
+                                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                                        <div className="bg-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
+                                            <div className="flex items-center gap-4">
+                                                <span className="text-sm font-semibold text-gray-700">Response</span>
+                                                {!response.error && (
+                                                    <>
+                                                        <span className={`px-2 py-1 rounded text-sm font-semibold ${
+                                                            response.status >= 200 && response.status < 300
+                                                                ? 'bg-green-100 text-green-800'
+                                                                : response.status >= 400
+                                                                ? 'bg-red-100 text-red-800'
+                                                                : 'bg-yellow-100 text-yellow-800'
+                                                        }`}>
+                                                            {response.status} {response.statusText}
+                                                        </span>
+                                                        <span className="text-sm text-gray-500">{response.time}ms</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                            {!response.error && (
+                                                <button
+                                                    onClick={copyResponse}
+                                                    className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 flex items-center gap-1"
+                                                >
+                                                    {copied ? <Check size={16} /> : <Copy size={16} />}
+                                                    {copied ? 'Copied!' : 'Copy'}
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="p-4 bg-gray-900 text-gray-100 overflow-auto max-h-96">
+                                            <pre className="text-sm font-mono whitespace-pre-wrap">
+                                                {response.error
+                                                    ? `Error: ${response.message}`
+                                                    : JSON.stringify(response.data, null, 2)}
+                                            </pre>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mt-4 text-sm text-gray-600 bg-white rounded-lg p-4">
+                            <h3 className="font-semibold mb-2">How to use OAuth 2.0 Authentication:</h3>
+                            <ol className="space-y-1 ml-4 list-decimal">
+                                <li>Enter your Brightspace OAuth app credentials (from the screenshot you shared)</li>
+                                <li>Click "Start OAuth Flow" - a popup will open for authorization</li>
+                                <li>After authorizing, copy the <code className="bg-gray-100 px-1 rounded">code</code> parameter from the redirect URL</li>
+                                <li>Paste the code to exchange it for an access token</li>
+                                <li>Make API requests with your authenticated token!</li>
+                            </ol>
+                            <h3 className="font-semibold mt-4 mb-2">Common Brightspace Endpoints:</h3>
+                            <ul className="space-y-1 ml-4">
+                                <li>• <code className="bg-gray-100 px-1 rounded">/d2l/api/lp/1.43/users/whoami</code> - Current user info</li>
+                                <li>• <code className="bg-gray-100 px-1 rounded">/d2l/api/lp/1.43/enrollments/myenrollments/</code> - User enrollments</li>
+                                <li>• <code className="bg-gray-100 px-1 rounded">/d2l/api/le/1.43/[orgUnitId]/content/root/</code> - Course content</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<BrightspaceAPITester />, document.getElementById('root'));
+    </script>
+</body>
+</html>
